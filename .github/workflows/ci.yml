@@ -17,11 +17,11 @@ jobs:
     name: Build, vet, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Pinned to 1.26, not go.mod's "go 1.24" floor - 1.24 has aged out of
       # Go's security-backport window (same reasoning as the Dockerfile).
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
           cache: false # no go.sum (stdlib-only) - default caching just warns every run for nothing to cache
@@ -51,7 +51,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -64,6 +64,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs-results.sarif
