@@ -142,7 +142,7 @@ func runCLI() {
 
 // printCLIHelp shows usage information
 func printCLIHelp() {
-	fmt.Println(`
+	fmt.Print(`
 🏓 Ping Pong Game - CLI & Server
 
 USAGE:
