@@ -19,19 +19,27 @@ permissions:
   contents: write # create the GitHub Release
   packages: write # push to GHCR
 
-env:
-  # toLower(): github.repository preserves actual casing (e.g. Serj258/x).
-  # docker/metadata-action lowercases internally for the actual push, but
-  # our own direct references (Trivy scan-ref, promote-latest's imagetools
-  # command) don't get that for free - an uppercase-owner repo produces a
-  # ref Trivy's parser rejects outright ("could not parse reference"),
-  # even though the image pushed fine under the lowercased tag.
-  IMAGE: ghcr.io/${{ toLower(github.repository) }}
-
 jobs:
+  vars:
+    name: Compute image ref
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      # GitHub Actions expressions have no built-in lowercase function.
+      # github.repository preserves actual casing (e.g. Serj258/echo-pong),
+      # but OCI image refs must be lowercase - shells out to `tr` once here
+      # instead of every job re-deriving it.
+      - id: image
+        run: |
+          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
   build-and-scan:
     name: Build, push, scan
+    needs: vars
     runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ needs.vars.outputs.image }}
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -76,10 +84,12 @@ jobs:
 
   promote-latest:
     name: Promote :latest (stable releases only)
-    needs: build-and-scan
+    needs: [vars, build-and-scan]
     # A tag like v1.2.3-rc1 (has a hyphen) is a prerelease - never latest.
     if: "!contains(github.ref_name, '-')"
     runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ needs.vars.outputs.image }}
     steps:
       - uses: docker/login-action@v3
         with:
