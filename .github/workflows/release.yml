@@ -1,0 +1,143 @@
+name: Release
+
+# Triggered by pushing a semver tag, e.g. `git tag v1.2.3 && git push --tags`.
+#
+# Gate design: push the versioned tag, scan it by digest, only promote
+# `:latest` (what most pull configs default to) if the scan passes - a
+# scan failure can never leave `:latest` pointing at a vulnerable image.
+# The versioned tag briefly exists pre-scan in GHCR; a stricter setup would
+# scan each single-arch image before any push (can't `docker load` a
+# multi-arch manifest list locally, so that means building each arch
+# separately first) - left as a follow-up, see docs/ARCHITECTURE.md.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # create the GitHub Release
+  packages: write # push to GHCR
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-and-scan:
+    name: Build, push, scan
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Version tags only here - `latest` is handled by the promote job
+      # below, gated on the scan passing.
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Trivy scan (gates the release)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: "${{ env.IMAGE }}@${{ steps.build.outputs.digest }}"
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          format: table
+
+  promote-latest:
+    name: Promote :latest (stable releases only)
+    needs: build-and-scan
+    # A tag like v1.2.3-rc1 (has a hyphen) is a prerelease - never latest.
+    if: "!contains(github.ref_name, '-')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Server-side manifest re-tag, not a rebuild/repull - the image
+      # bytes were already scanned in the previous job.
+      - run: |
+          docker buildx imagetools create \
+            --tag ${{ env.IMAGE }}:latest \
+            ${{ env.IMAGE }}@${{ needs.build-and-scan.outputs.digest }}
+
+  binaries:
+    name: Binary (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o dist/ping-pong-app .
+          cd dist
+          name="ping-pong-app_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          tar -czf "${name}.tar.gz" ping-pong-app
+          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          rm ping-pong-app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-and-scan, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: release-assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: release-assets/*

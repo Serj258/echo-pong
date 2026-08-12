@@ -1,0 +1,68 @@
+name: CI
+
+# Fast feedback on every push/PR: build/vet/test/format plus a
+# non-blocking Trivy filesystem scan. Not the release gate - release.yml
+# scans the built image and fails on CRITICAL/HIGH; this stays fast
+# instead of waiting on a full multi-arch build+scan.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to 1.26, not go.mod's "go 1.24" floor - 1.24 has aged out of
+      # Go's security-backport window (same reasoning as the Dockerfile).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: gofmt check
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "Not gofmt'd:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./...
+
+  security-scan:
+    name: Trivy filesystem scan (informational)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-fs-results.sarif
+          exit-code: "0"
+
+      - name: Upload results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs-results.sarif

@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-pong
+  namespace: echo-pong
+  labels:
+    app: echo-pong
+spec:
+  replicas: 2
+  # maxUnavailable: 0 forces a new Pod to be Ready before an old one is
+  # removed - zero-downtime by construction.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: echo-pong
+  template:
+    metadata:
+      labels:
+        app: echo-pong
+    spec:
+      # main.go has no SIGTERM handler, so it dies instantly on signal.
+      # Endpoint removal and SIGTERM delivery race during a Pod delete;
+      # this sleep buys time for the removal to propagate through
+      # kube-proxy first. Native k8s lifecycle action (no exec/shell -
+      # distroless has none). Requires Kubernetes >= 1.30.
+      terminationGracePeriodSeconds: 10
+      # Without fsGroup the mounted Secret is root-owned and unreadable by
+      # runAsUser 65532 - crash-loops on "permission denied".
+      securityContext:
+        fsGroup: 65532
+      affinity:
+        # Spread replicas across nodes so one node loss doesn't take out both.
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: echo-pong
+                topologyKey: kubernetes.io/hostname
+        # "ARM64 preferred", not required - image is multi-arch and should
+        # still schedule on amd64-only clusters.
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values: ["arm64"]
+      # Only needed for a private GHCR package (the default). Simplest fix
+      # is making the package public; otherwise:
+      #   kubectl -n echo-pong create secret docker-registry ghcr-pull-secret \
+      #     --docker-server=ghcr.io --docker-username=<gh-user> \
+      #     --docker-password=<token with read:packages>
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: echo-pong
+          image: ghcr.io/change-me-owner/echo-pong:latest # replace owner/repo; pin a real tag in production
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: SECRET_FILE_PATH
+              value: /etc/echo-pong-secret/token
+          volumeMounts:
+            - name: secret
+              mountPath: /etc/echo-pong-secret
+              readOnly: true
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          # App sleeps 10s before it starts listening; initialDelaySeconds
+          # is set past that purely to avoid noisy probe-failure events -
+          # kubelet retries regardless.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 12
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: secret
+          secret:
+            secretName: echo-pong-token
+            # 0440: fsGroup (above) makes gid 65532 the file's group, so
+            # group-read is enough - no need for world-readable 0644.
+            defaultMode: 0440

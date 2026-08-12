@@ -1,0 +1,24 @@
+# The one deliberate opening into the cluster. On Minikube this rides on
+# the nginx addon (`minikube addons enable ingress`); on EKS this would be
+# the AWS Load Balancer Controller's ALB Ingress Class instead - see
+# docs/ARCHITECTURE.md.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-pong
+  namespace: echo-pong
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: echo-pong.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-pong
+                port:
+                  name: http

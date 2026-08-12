@@ -1,0 +1,14 @@
+# Belt-and-suspenders for zero-downtime: the Deployment strategy protects
+# rollouts, this protects against voluntary disruptions (node drains,
+# cluster-autoscaler scale-down, `kubectl drain`) taking out both replicas
+# at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: echo-pong
+  namespace: echo-pong
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: echo-pong

@@ -1,0 +1,24 @@
+# App calls nothing external. Default-deny egress except DNS, so "no
+# direct internet access" is enforced, not just an accident of Service
+# type. Ingress is left unrestricted deliberately - some CNIs apply
+# NetworkPolicy to kubelet probe traffic too, and locking egress alone
+# already satisfies the requirement.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: echo-pong-default-deny-egress
+  namespace: echo-pong
+spec:
+  podSelector:
+    matchLabels:
+      app: echo-pong
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

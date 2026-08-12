@@ -1,0 +1,33 @@
+name: Cleanup stale GHCR versions
+
+# Weekly pruning: keep the 10 most recently tagged versions, delete
+# untagged ones. Uses dataaxiom/ghcr-cleanup-action rather than the more
+# common actions/delete-package-versions because it's multi-arch-aware -
+# the latter treats each platform's sub-manifest as an independent
+# "untagged" version and will delete it out from under a still-tagged
+# parent, breaking pulls for that arch.
+#
+# Manual runs default to dry-run; the scheduled run deletes for real.
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # weekly, Sunday 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview deletions without actually deleting"
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          delete-untagged: true
+          keep-n-tagged: 10
+          dry-run: ${{ inputs.dry_run || false }}

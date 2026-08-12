@@ -1,0 +1,18 @@
+# ClusterIP - deliberately not NodePort/LoadBalancer. This is what
+# satisfies "no direct internet access": the only path in is the Ingress
+# below.
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-pong
+  namespace: echo-pong
+  labels:
+    app: echo-pong
+spec:
+  type: ClusterIP
+  selector:
+    app: echo-pong
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
