@@ -20,7 +20,13 @@ permissions:
   packages: write # push to GHCR
 
 env:
-  IMAGE: ghcr.io/${{ github.repository }}
+  # toLower(): github.repository preserves actual casing (e.g. Serj258/x).
+  # docker/metadata-action lowercases internally for the actual push, but
+  # our own direct references (Trivy scan-ref, promote-latest's imagetools
+  # command) don't get that for free - an uppercase-owner repo produces a
+  # ref Trivy's parser rejects outright ("could not parse reference"),
+  # even though the image pushed fine under the lowercased tag.
+  IMAGE: ghcr.io/${{ toLower(github.repository) }}
 
 jobs:
   build-and-scan:
